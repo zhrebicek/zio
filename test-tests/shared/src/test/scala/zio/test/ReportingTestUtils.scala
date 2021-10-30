@@ -97,7 +97,7 @@ object ReportingTestUtils {
   )
 
   val test4: Spec[Any, TestFailure[String], Nothing] =
-    Spec.test("Failing test", failed(Cause.fail("Fail")), TestAnnotationMap.empty)
+    Spec.labeled("Failing test", Spec.test(failed(Cause.fail("Fail")), TestAnnotationMap.empty))
   val test4Expected: Vector[String] = Vector(
     expectedFailure("Failing test"),
     withOffset(2)("Fiber failed.\n") +
@@ -267,7 +267,7 @@ object ReportingTestUtils {
     """[\s║]*failed!"""
   )
 
-  def assertSourceLocation(): String = cyan(s"☛ $sourceFilePath:XXX")
+  def assertSourceLocation(): String = cyan(s"at $sourceFilePath:XXX")
   implicit class TestOutputOps(output: String) {
     def withNoLineNumbers: String =
       output.replaceAll(Pattern.quote(sourceFilePath + ":") + "\\d+", sourceFilePath + ":XXX")

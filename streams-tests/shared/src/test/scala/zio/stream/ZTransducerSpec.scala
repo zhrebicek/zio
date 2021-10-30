@@ -341,6 +341,21 @@ object ZTransducerSpec extends ZIOBaseSpec {
             .runCollect
         )(equalTo(Chunk(3, 4, 5, 1, 2, 3, 4, 5)))
       ),
+      testM("groupAdjacentBy")(
+        assertM(
+          ZStream((1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (1, 4))
+            .aggregate(ZTransducer.groupAdjacentBy(_._1))
+            .runCollect
+        )(
+          equalTo(
+            Chunk(
+              (1, NonEmptyChunk((1, 1), (1, 2), (1, 3))),
+              (2, NonEmptyChunk((2, 1), (2, 2))),
+              (1, NonEmptyChunk((1, 4)))
+            )
+          )
+        )
+      ),
       suite("dropWhileM")(
         testM("happy path")(
           assertM(
@@ -616,10 +631,10 @@ object ZTransducerSpec extends ZIOBaseSpec {
                             Managed.make(
                               ref
                                 .update(_ + 1)
-                                .as[Option[Chunk[Int]] => UIO[Chunk[Int]]]({
+                                .as[Option[Chunk[Int]] => UIO[Chunk[Int]]] {
                                   case None    => ZIO.succeedNow(Chunk.empty)
                                   case Some(c) => ZIO.succeedNow(c)
-                                })
+                                }
                             )(_ => ref.update(_ - 1))
                           }
                       }
@@ -644,9 +659,9 @@ object ZTransducerSpec extends ZIOBaseSpec {
                             Managed.make(
                               ref
                                 .update(_ + 1)
-                                .as[Option[Chunk[Int]] => IO[String, Chunk[Int]]]({ case _ =>
+                                .as[Option[Chunk[Int]] => IO[String, Chunk[Int]]] { case _ =>
                                   ZIO.fail("boom")
-                                })
+                                }
                             )(_ => ref.update(_ - 1))
                           }
                       }

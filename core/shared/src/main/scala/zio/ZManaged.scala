@@ -1218,6 +1218,13 @@ object ZManaged extends ZManagedPlatformSpecific {
       ZManaged.fromEffect(ZIO.serviceWith[Service](f))
   }
 
+  final class ServiceWithManagedPartiallyApplied[Service](private val dummy: Boolean = true) extends AnyVal {
+    def apply[E, A](f: Service => ZManaged[Has[Service], E, A])(implicit
+      tag: Tag[Service]
+    ): ZManaged[Has[Service], E, A] =
+      ZManaged.accessManaged[Has[Service]](hasService => f(hasService.get))
+  }
+
   /**
    * A finalizer used in a [[ReleaseMap]]. The [[Exit]] value passed to
    * it is the result of executing [[ZManaged#use]] or an arbitrary value
@@ -2042,7 +2049,7 @@ object ZManaged extends ZManagedPlatformSpecific {
    * access to the resource. The acquire and release actions will be performed
    * uninterruptibly.
    */
-  def makeEffectTotal_[A](acquire: => A)(release: => A): ZManaged[Any, Nothing, A] =
+  def makeEffectTotal_[A](acquire: => A)(release: => Any): ZManaged[Any, Nothing, A] =
     makeEffectTotal(acquire)(_ => release)
 
   /**
@@ -2196,6 +2203,29 @@ object ZManaged extends ZManagedPlatformSpecific {
     (zManaged1 <&> zManaged2 <&> zManaged3 <&> zManaged4).map { case (((a, b), c), d) =>
       f(a, b, c, d)
     }
+
+  /**
+   * Returns a memoized version of the specified resourceful function in the
+   * context of a managed scope. Each time the memoized function is evaluated
+   * a new resource will be acquired, if the function has not already been
+   * evaluated with that input, or else the previously acquired resource will
+   * be returned. All resources acquired by evaluating the function will be
+   * released at the end of the scope.
+   */
+  def memoize[R, E, A, B](f: A => ZManaged[R, E, B]): ZManaged[Any, Nothing, A => ZIO[R, E, B]] =
+    for {
+      fiberId <- ZIO.fiberId.toManaged_
+      ref     <- Ref.makeManaged[Map[A, Promise[E, B]]](Map.empty)
+      scope   <- ZManaged.scope
+    } yield a =>
+      ref.modify { map =>
+        map.get(a) match {
+          case Some(promise) => (promise.await, map)
+          case None =>
+            val promise = Promise.unsafeMake[E, B](fiberId)
+            (scope(f(a)).map(_._2).to(promise) *> promise.await, map + (a -> promise))
+        }
+      }.flatten
 
   /**
    * Merges an `Iterable[ZManaged]` to a single `ZManaged`, working sequentially.
@@ -2411,6 +2441,23 @@ object ZManaged extends ZManagedPlatformSpecific {
    */
   def serviceWith[Service]: ServiceWithPartiallyApplied[Service] =
     new ServiceWithPartiallyApplied[Service]
+
+  /**
+   * Effectfully accesses the specified managed service in the environment of the effect .
+   *
+   * Especially useful for creating "accessor" methods on Services' companion objects accessing managed resources.
+   *
+   * {{{
+   * trait Foo {
+   *  def start(): ZManaged[Any, Nothing, Unit]
+   * }
+   *
+   * def start: ZManaged[Has[Foo], Nothing, Unit] =
+   *  ZManaged.serviceWithManaged[Foo](_.start())
+   * }}}
+   */
+  def serviceWithManaged[Service]: ServiceWithManagedPartiallyApplied[Service] =
+    new ServiceWithManagedPartiallyApplied[Service]
 
   /**
    *  Returns an effect with the optional value.

@@ -107,7 +107,7 @@ trait ZStreamPlatformSpecificConstructors {
    * by setting it to `None`.
    */
   def effectAsync[R, E, A](
-    register: (ZIO[R, Option[E], Chunk[A]] => Unit) => Unit,
+    register: ZStream.Emit[R, E, A, Unit] => Unit,
     outputBuffer: Int = 16
   ): ZStream[R, E, A] =
     effectAsyncMaybe(
@@ -125,7 +125,7 @@ trait ZStreamPlatformSpecificConstructors {
    * setting it to `None`.
    */
   def effectAsyncInterrupt[R, E, A](
-    register: (ZIO[R, Option[E], Chunk[A]] => Unit) => Either[Canceler[R], ZStream[R, E, A]],
+    register: ZStream.Emit[R, E, A, Unit] => Either[Canceler[R], ZStream[R, E, A]],
     outputBuffer: Int = 16
   ): ZStream[R, E, A] =
     ZStream {
@@ -157,12 +157,44 @@ trait ZStreamPlatformSpecificConstructors {
     }
 
   /**
+   * Creates a stream from an asynchronous callback that can be called multiple times.
+   * The registration of the callback itself returns an a managed resource.
+   * The optionality of the error type `E` can be used to signal the end of the
+   * stream, by setting it to `None`.
+   */
+  def effectAsyncManaged[R, E, A](
+    register: (ZIO[R, Option[E], Chunk[A]] => Unit) => ZManaged[R, E, Any],
+    outputBuffer: Int = 16
+  ): ZStream[R, E, A] =
+    managed {
+      for {
+        output  <- Queue.bounded[stream.Take[E, A]](outputBuffer).toManaged(_.shutdown)
+        runtime <- ZIO.runtime[R].toManaged_
+        _ <- register { k =>
+               try {
+                 runtime.unsafeRun(stream.Take.fromPull(k).flatMap(output.offer))
+                 ()
+               } catch {
+                 case FiberFailure(c) if c.interrupted =>
+               }
+             }
+        done <- ZRef.makeManaged(false)
+        pull = done.get.flatMap {
+                 if (_)
+                   Pull.end
+                 else
+                   output.take.flatMap(_.done).onError(_ => done.set(true) *> output.shutdown)
+               }
+      } yield pull
+    }.flatMap(repeatEffectChunkOption(_))
+
+  /**
    * Creates a stream from an asynchronous callback that can be called multiple times
    * The registration of the callback itself returns an effect. The optionality of the
    * error type `E` can be used to signal the end of the stream, by setting it to `None`.
    */
   def effectAsyncM[R, E, A](
-    register: (ZIO[R, Option[E], Chunk[A]] => Unit) => ZIO[R, E, Any],
+    register: ZStream.Emit[R, E, A, Unit] => ZIO[R, E, Any],
     outputBuffer: Int = 16
   ): ZStream[R, E, A] =
     managed {
@@ -194,7 +226,7 @@ trait ZStreamPlatformSpecificConstructors {
    * by setting it to `None`.
    */
   def effectAsyncMaybe[R, E, A](
-    register: (ZIO[R, Option[E], Chunk[A]] => Unit) => Option[ZStream[R, E, A]],
+    register: ZStream.Emit[R, E, A, Unit] => Option[ZStream[R, E, A]],
     outputBuffer: Int = 16
   ): ZStream[R, E, A] =
     ZStream {
@@ -428,7 +460,7 @@ trait ZStreamPlatformSpecificConstructors {
   /**
    * Creates a stream from a Java stream
    */
-  final def fromJavaStream[R, A](stream: => ju.stream.Stream[A]): ZStream[R, Throwable, A] =
+  final def fromJavaStream[A](stream: => ju.stream.Stream[A]): ZStream[Any, Throwable, A] =
     ZStream.fromJavaIterator(stream.iterator())
 
   /**

@@ -211,10 +211,17 @@ object Assertion extends AssertionVariants {
     Assertion.assertionRec("hasMessage")(param(message))(message)(th => Some(th.getMessage))
 
   /**
+   * Makes a new assertion that requires an exception to have certain
+   * suppressed exceptions.
+   */
+  def hasSuppressed(cause: Assertion[Iterable[Throwable]]): Assertion[Throwable] =
+    Assertion.assertionRec("hasSuppressed")(param(cause))(cause)(th => Some(th.getSuppressed))
+
+  /**
    * Makes a new assertion that requires an exception to have a certain cause.
    */
   def hasThrowableCause(cause: Assertion[Throwable]): Assertion[Throwable] =
-    Assertion.assertionRec("hasThrowableCause")(param(cause))(cause)(th => Some(th.getCause))
+    Assertion.assertionRec("hasThrowableCause")(param(cause))(cause)(th => Option(th.getCause))
 
   /**
    * Makes a new assertion that requires a given string to end with the specified suffix.
@@ -469,7 +476,7 @@ object Assertion extends AssertionVariants {
    * assertion.
    */
   def isFailure(assertion: Assertion[Throwable]): Assertion[Try[Any]] =
-    Assertion.assertionRec("isSuccess")(param(assertion))(assertion) {
+    Assertion.assertionRec("isFailure")(param(assertion))(assertion) {
       case Failure(a) => Some(a)
       case Success(_) => None
     }

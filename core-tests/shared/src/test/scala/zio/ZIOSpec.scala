@@ -231,6 +231,22 @@ object ZIOSpec extends ZIOBaseSpec {
           assert(d)(not(equalTo(e)))
       }
     ),
+    suite("catchNonFatalOrDie")(
+      testM("recovers from NonFatal") {
+        val s   = "division by zero"
+        val zio = ZIO.fail(new IllegalArgumentException(s))
+        for {
+          result <- zio.catchNonFatalOrDie(e => ZIO.succeed(e.getMessage)).run
+        } yield assert(result)(succeeds(equalTo(s)))
+      },
+      testM("dies if fatal") {
+        val e   = new OutOfMemoryError
+        val zio = ZIO.fail(e)
+        for {
+          result <- zio.catchNonFatalOrDie(e => ZIO.succeed(e.getMessage)).run
+        } yield assert(result)(dies(equalTo(e)))
+      } @@ jvmOnly // no fatal exceptions in JS
+    ),
     suite("catchAllDefect")(
       testM("recovers from all defects") {
         val s   = "division by zero"
@@ -314,9 +330,9 @@ object ZIOSpec extends ZIOBaseSpec {
       testM("returns failure ignoring value") {
         for {
           goodCase <-
-            exactlyOnce(0)(_.collect(s"value was not 0")({ case v @ 0 => v })).sandbox.either
+            exactlyOnce(0)(_.collect(s"value was not 0") { case v @ 0 => v }).sandbox.either
           badCase <-
-            exactlyOnce(1)(_.collect(s"value was not 0")({ case v @ 0 => v })).sandbox.either
+            exactlyOnce(1)(_.collect(s"value was not 0") { case v @ 0 => v }).sandbox.either
               .map(_.left.map(_.failureOrCause))
         } yield assert(goodCase)(isRight(equalTo(0))) &&
           assert(badCase)(isLeft(isLeft(equalTo("value was not 0"))))
@@ -364,15 +380,15 @@ object ZIOSpec extends ZIOBaseSpec {
         for {
           goodCase <-
             exactlyOnce(0)(
-              _.collectM[Any, String, Int]("Predicate failed!")({ case v @ 0 => ZIO.succeed(v) })
+              _.collectM[Any, String, Int]("Predicate failed!") { case v @ 0 => ZIO.succeed(v) }
             ).sandbox.either
           partialBadCase <-
             exactlyOnce(0)(
-              _.collectM("Predicate failed!")({ case v @ 0 => ZIO.fail("Partial failed!") })
+              _.collectM("Predicate failed!") { case v @ 0 => ZIO.fail("Partial failed!") }
             ).sandbox.either
               .map(_.left.map(_.failureOrCause))
           badCase <-
-            exactlyOnce(1)(_.collectM("Predicate failed!")({ case v @ 0 => ZIO.succeed(v) })).sandbox.either
+            exactlyOnce(1)(_.collectM("Predicate failed!") { case v @ 0 => ZIO.succeed(v) }).sandbox.either
               .map(_.left.map(_.failureOrCause))
         } yield assert(goodCase)(isRight(equalTo(0))) &&
           assert(partialBadCase)(isLeft(isLeft(equalTo("Partial failed!")))) &&
@@ -433,7 +449,7 @@ object ZIOSpec extends ZIOBaseSpec {
     ),
     suite("executor")(
       testM("retrieves the current executor for this effect") {
-        val executor = internal.Executor.fromExecutionContext(100) {
+        val executor = zio.internal.Executor.fromExecutionContext(100) {
           scala.concurrent.ExecutionContext.Implicits.global
         }
         for {
@@ -1939,9 +1955,9 @@ object ZIOSpec extends ZIOBaseSpec {
       testM("returns failure ignoring value") {
         for {
           goodCase <-
-            exactlyOnce(0)(_.reject({ case v if v != 0 => "Partial failed!" })).sandbox.either
+            exactlyOnce(0)(_.reject { case v if v != 0 => "Partial failed!" }).sandbox.either
           badCase <-
-            exactlyOnce(1)(_.reject({ case v if v != 0 => "Partial failed!" })).sandbox.either
+            exactlyOnce(1)(_.reject { case v if v != 0 => "Partial failed!" }).sandbox.either
               .map(_.left.map(_.failureOrCause))
         } yield assert(goodCase)(isRight(equalTo(0))) &&
           assert(badCase)(isLeft(isLeft(equalTo("Partial failed!"))))
@@ -1952,13 +1968,13 @@ object ZIOSpec extends ZIOBaseSpec {
         for {
           goodCase <-
             exactlyOnce(0)(
-              _.rejectM[Any, String]({ case v if v != 0 => ZIO.succeed("Partial failed!") })
+              _.rejectM[Any, String] { case v if v != 0 => ZIO.succeed("Partial failed!") }
             ).sandbox.either
           partialBadCase <-
-            exactlyOnce(1)(_.rejectM({ case v if v != 0 => ZIO.fail("Partial failed!") })).sandbox.either
+            exactlyOnce(1)(_.rejectM { case v if v != 0 => ZIO.fail("Partial failed!") }).sandbox.either
               .map(_.left.map(_.failureOrCause))
           badCase <-
-            exactlyOnce(1)(_.rejectM({ case v if v != 0 => ZIO.fail("Partial failed!") })).sandbox.either
+            exactlyOnce(1)(_.rejectM { case v if v != 0 => ZIO.fail("Partial failed!") }).sandbox.either
               .map(_.left.map(_.failureOrCause))
 
         } yield assert(goodCase)(isRight(equalTo(0))) &&
@@ -3136,7 +3152,7 @@ object ZIOSpec extends ZIOBaseSpec {
         } yield assert(v)(equalTo(InterruptStatus.uninterruptible))
       } @@ zioTag(interruption),
       testM("executor is heritable") {
-        val executor = internal.Executor.fromExecutionContext(100) {
+        val executor = zio.internal.Executor.fromExecutionContext(100) {
           scala.concurrent.ExecutionContext.Implicits.global
         }
         val pool = ZIO.effectTotal(Platform.getCurrentThreadGroup)
@@ -3707,7 +3723,7 @@ object ZIOSpec extends ZIOBaseSpec {
         for {
           future <- ZIO.fail(new Throwable(new IllegalArgumentException)).toFuture
           result <- ZIO.fromFuture(_ => future).either
-        } yield assert(result)(isLeft(hasThrowableCause(hasThrowableCause(hasMessage(containsString("Fiber:Id("))))))
+        } yield assert(result)(isLeft(hasSuppressed(exists(hasMessage(containsString("Fiber:Id("))))))
       }
     ) @@ zioTag(future),
     suite("resurrect")(

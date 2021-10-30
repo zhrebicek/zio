@@ -55,8 +55,8 @@ sealed trait Arrow[-A, +B] { self =>
   def withCode(code: String): Arrow[A, B] =
     meta(code = Some(code))
 
-  def withLocation(location: String): Arrow[A, B] =
-    meta(location = Some(location))
+  def withLocation(implicit location: SourceLocation): Arrow[A, B] =
+    meta(location = Some(s"${location.path}:${location.line}"))
 
   def withParentSpan(span: (Int, Int)): Arrow[A, B] =
     meta(parentSpan = Some(Span(span._1, span._2)))
@@ -146,7 +146,7 @@ object Arrow {
     parentSpan: Option[Span],
     code: Option[String],
     location: Option[String]
-  )                                                                     extends Arrow[A, B]
+  ) extends Arrow[A, B]
   case class ArrowF[-A, +B](f: Either[Throwable, A] => Trace[B])        extends Arrow[A, B] {}
   case class AndThen[A, B, C](f: Arrow[A, B], g: Arrow[B, C])           extends Arrow[A, C]
   case class And(left: Arrow[Any, Boolean], right: Arrow[Any, Boolean]) extends Arrow[Any, Boolean]

@@ -66,8 +66,8 @@ object ZManagedSpec extends ZIOBaseSpec {
     ),
     suite("makeEffect")(
       testM("Invokes cleanups in reverse order of acquisition.") {
-        var effects = List[Int]()
-        def acquire(x: Int): Int = { effects = x :: effects; x }
+        var effects               = List[Int]()
+        def acquire(x: Int): Int  = { effects = x :: effects; x }
         def release(x: Int): Unit = effects = x :: effects
 
         val res     = (x: Int) => ZManaged.makeEffect(acquire(x))(release)
@@ -885,11 +885,11 @@ object ZManagedSpec extends ZIOBaseSpec {
     suite("reject")(
       testM("returns failure ignoring value") {
         val goodCase =
-          ZManaged.succeed(0).reject({ case v if v != 0 => "Partial failed!" }).sandbox.either
+          ZManaged.succeed(0).reject { case v if v != 0 => "Partial failed!" }.sandbox.either
 
         val badCase = ZManaged
           .succeed(1)
-          .reject({ case v if v != 0 => "Partial failed!" })
+          .reject { case v if v != 0 => "Partial failed!" }
           .sandbox
           .either
           .map(_.left.map(_.failureOrCause))
@@ -905,14 +905,14 @@ object ZManagedSpec extends ZIOBaseSpec {
         val goodCase =
           ZManaged
             .succeed(0)
-            .rejectM[Any, String]({ case v if v != 0 => ZManaged.succeed("Partial failed!") })
+            .rejectM[Any, String] { case v if v != 0 => ZManaged.succeed("Partial failed!") }
             .sandbox
             .either
 
         val partialBadCase =
           ZManaged
             .succeed(1)
-            .rejectM({ case v if v != 0 => ZManaged.fail("Partial failed!") })
+            .rejectM { case v if v != 0 => ZManaged.fail("Partial failed!") }
             .sandbox
             .either
             .map(_.left.map(_.failureOrCause))
@@ -920,7 +920,7 @@ object ZManagedSpec extends ZIOBaseSpec {
         val badCase =
           ZManaged
             .succeed(1)
-            .rejectM({ case v if v != 0 => ZManaged.fail("Partial failed!") })
+            .rejectM { case v if v != 0 => ZManaged.fail("Partial failed!") }
             .sandbox
             .either
             .map(_.left.map(_.failureOrCause))
@@ -1514,6 +1514,59 @@ object ZManagedSpec extends ZIOBaseSpec {
           res3     <- assertM(latch2.isDone)(isFalse)
         } yield res1 && res2 && res3
       } @@ zioTag(interruption)
+    ),
+    suite("memoize")(
+      testM("resources are properly acquired and released") {
+        for {
+          ref <- Ref.make[Map[Int, (Int, Int)]](Map.empty)
+          acquire = (n: Int) =>
+                      ref.update { map =>
+                        map.getOrElse(n, (0, 0)) match {
+                          case (acquired, released) => map + (n -> ((acquired + 1, released)))
+                        }
+                      }
+          release = (n: Int) =>
+                      ref.update { map =>
+                        map.getOrElse(n, (0, 0)) match {
+                          case (acquired, released) => map + (n -> ((acquired, released + 1)))
+                        }
+                      }
+          managed = (n: Int) => ZManaged.make_(acquire(n))(release(n))
+          _ <- ZManaged.memoize(managed).use { memoized =>
+                 ZIO.foreachPar_(0 to 100)(n => memoized(n % 8))
+               }
+          map <- ref.get
+        } yield assert(map.keys)(equalTo(Set(0, 1, 2, 3, 4, 5, 6, 7))) &&
+          assert(map.values.map(_._1))(forall(equalTo(1))) &&
+          assert(map.values.map(_._2))(forall(equalTo(1)))
+      },
+      testM("resources are properly released in the event of interruption") {
+        for {
+          ref <- Ref.make[Map[Int, (Int, Int)]](Map.empty)
+          acquire = (n: Int) =>
+                      ref.update { map =>
+                        map.getOrElse(n, (0, 0)) match {
+                          case (acquired, released) => map + (n -> ((acquired + 1, released)))
+                        }
+                      }
+          release = (n: Int) =>
+                      ref.update { map =>
+                        map.getOrElse(n, (0, 0)) match {
+                          case (acquired, released) => map + (n -> ((acquired, released + 1)))
+                        }
+                      }
+          managed = (n: Int) => ZManaged.make_(acquire(n))(release(n))
+          fiber <- ZManaged
+                     .memoize(managed)
+                     .use { memoized =>
+                       ZIO.foreachPar_(0 to 100)(n => memoized(n % 8) *> ZIO.never)
+                     }
+                     .fork
+          _   <- fiber.interrupt
+          map <- ref.get
+        } yield assert(map.values.map(_._1))(forall(equalTo(1))) &&
+          assert(map.values.map(_._2))(forall(equalTo(1)))
+      }
     ),
     suite("merge")(
       testM("on flipped result") {

@@ -20,6 +20,8 @@ import zio.ZManaged.ReleaseMap
 import zio.duration.Duration
 import zio.internal.Platform
 
+import scala.collection.mutable.Builder
+
 /**
  * A `ZLayer[A, E, B]` describes a layer of an application: every layer in an
  * application requires some services (the input) and produces some services
@@ -133,6 +135,14 @@ sealed abstract class ZLayer[-RIn, +E, +ROut] { self =>
       }
     fold(failureOrDie >>> handler, ZLayer.identity)
   }
+
+  /**
+    * Constructs a layer dynamically based on the output of this layer.
+    */
+   final def flatMap[RIn1 <: RIn, E1 >: E, ROut2](
+     f: ROut => ZLayer[RIn1, E1, ROut2]
+   ): ZLayer[RIn1, E1, ROut2] =
+     ZLayer.Flatten(self.map(f))
 
   /**
    * Feeds the error or output services of this layer into the input of either
@@ -284,6 +294,8 @@ sealed abstract class ZLayer[-RIn, +E, +ROut] { self =>
 
   private final def scope: Managed[Nothing, ZLayer.MemoMap => ZManaged[RIn, E, ROut]] =
     self match {
+      case ZLayer.Flatten(self) =>
+         ZManaged.succeed(memoMap => memoMap.getOrElseMemoize(self).flatMap(memoMap.getOrElseMemoize))
       case ZLayer.Fold(self, failure, success) =>
         ZManaged.succeed(memoMap =>
           memoMap
@@ -310,6 +322,9 @@ object ZLayer {
   @deprecated("use Layer", "1.0.0")
   type NoDeps[+E, +B] = ZLayer[Any, E, B]
 
+  private final case class Flatten[-RIn, +E, +ROut](
+     self: ZLayer[RIn, E, ZLayer[RIn, E, ROut]]
+   ) extends ZLayer[RIn, E, ROut]
   private final case class Fold[RIn, E, E1, ROut, ROut1](
     self: ZLayer[RIn, E, ROut],
     failure: ZLayer[(RIn, Cause[E]), E1, ROut1],
@@ -336,6 +351,15 @@ object ZLayer {
     Managed(managed)
 
   /**
+    * Gathers up the ZLayers inside of the given collection, and combines them into a single ZLayer containing
+    * an equivalent collection of results.
+    */
+  def collectAll[R, E, A, Collection[+Element] <: Iterable[Element]](
+    in: Collection[ZLayer[R, E, A]]
+  )(implicit bf: BuildFrom[Collection[ZLayer[R, E, A]], A, Collection[A]]): ZLayer[R, E, Collection[A]] =
+    foreach(in)(i => i)
+
+  /**
    * Constructs a layer that fails with the specified value.
    */
   def fail[E](e: E): Layer[E, Nothing] =
@@ -346,6 +370,17 @@ object ZLayer {
    */
   def first[A]: ZLayer[(A, Any), Nothing, A] =
     ZLayer.fromFunctionMany(_._1)
+
+  /**
+    * Applies the function `f` to each element of the `Collection[A]` and
+    * returns the results in a new `Collection[B]`.
+    */
+  def foreach[R, E, A, B, Collection[+Element] <: Iterable[Element]](
+    in: Collection[A]
+  )(f: A => ZLayer[R, E, B])(implicit bf: BuildFrom[Collection[A], B, Collection[B]]): ZLayer[R, E, Collection[B]] =
+    in.foldLeft[ZLayer[R, E, Builder[B, Collection[B]]]](ZLayer.succeedMany(bf.newBuilder(in)))((io, a) =>
+      io.zipWithPar(f(a))(_ += _)
+    ).map(_.result())
 
   /**
    * Constructs a layer from acquire and release actions. The acquire and

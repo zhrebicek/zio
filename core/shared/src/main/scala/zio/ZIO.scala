@@ -399,6 +399,21 @@ sealed trait ZIO[-R, +E, +A] extends Serializable with ZIOPlatformSpecific[R, E,
     catchSomeDefect { case t => h(t) }
 
   /**
+   * Recovers from all NonFatal Throwables.
+   *
+   * {{{
+   * openFile("data.json").catchNonFatalOrDie(_ => openFile("backup.json"))
+   * }}}
+   */
+  final def catchNonFatalOrDie[R1 <: R, E2, A1 >: A](
+    h: E => ZIO[R1, E2, A1]
+  )(implicit ev1: CanFail[E], ev2: E <:< Throwable): ZIO[R1, E2, A1] = {
+
+    def hh(e: E) = ZIO.runtime[Any].flatMap(runtime => if (runtime.platform.fatal(e)) ZIO.die(e) else h(e))
+    self.foldM[R1, E2, A1](hh, new ZIO.SucceedFn(hh _))
+  }
+
+  /**
    * Recovers from some or all of the error cases.
    *
    * {{{
@@ -759,7 +774,7 @@ sealed trait ZIO[-R, +E, +A] extends Serializable with ZIOPlatformSpecific[R, E,
    * directly, consider other higher-level methods, such as `raceWith`,
    * `zipPar`, and so forth.
    *
-   * The fiber returned by this method has methods interrupt the fiber and to
+   * The fiber returned by this method has methods to interrupt the fiber and to
    * wait for it to finish executing the effect. See [[zio.Fiber]] for more
    * information.
    *
@@ -1126,7 +1141,7 @@ sealed trait ZIO[-R, +E, +A] extends Serializable with ZIOPlatformSpecific[R, E,
    * }}}
    */
   final def resurrect(implicit ev1: E <:< Throwable): RIO[R, A] =
-    self.unrefineWith({ case e => e })(ev1)
+    self.unrefineWith { case e => e }(ev1)
 
   /**
    * Executes this effect and returns its value, if it succeeds, but
@@ -3194,6 +3209,7 @@ object ZIO extends ZIOCompanionPlatformSpecific {
                  }
                  .refailWithTrace
              }
+        _ <- ZIO.foreach(fibers)(_.inheritRefs)
       } yield ()
     }
 
@@ -4259,6 +4275,12 @@ object ZIO extends ZIOCompanionPlatformSpecific {
      * Converts this ZIO value to a ZManaged value. See [[ZManaged.fromAutoCloseable]].
      */
     def toManaged: ZManaged[R, E, A] = ZManaged.fromAutoCloseable(io)
+
+    /**
+     * Converts this ZIO value to a ZManaged value. See [[ZManaged.fromAutoCloseable]].
+     */
+    def toManagedAuto: ZManaged[R, E, A] =
+      ZManaged.fromAutoCloseable(io)
   }
 
   implicit final class ZioRefineToOrDieOps[R, E <: Throwable, A](private val self: ZIO[R, E, A]) extends AnyVal {

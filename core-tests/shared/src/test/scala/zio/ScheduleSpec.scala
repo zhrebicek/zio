@@ -17,16 +17,16 @@ object ScheduleSpec extends ZIOBaseSpec {
 
   import ZIOTag._
 
+  /**
+   * Retry `once` means that we try to exec `io`, get and error,
+   * try again to exec `io`, and whatever the output is, we return that
+   * second result.
+   * The three following tests test retry when:
+   * - the first time succeeds (no retry)
+   * - the first time fails and the second succeeds (one retry, result success)
+   * - both first time and retry fail (one retry, result failure)
+   */
   def spec: ZSpec[Environment, Failure] = suite("ScheduleSpec")(
-    /**
-     * Retry `once` means that we try to exec `io`, get and error,
-     * try again to exec `io`, and whatever the output is, we return that
-     * second result.
-     * The three following tests test retry when:
-     * - the first time succeeds (no retry)
-     * - the first time fails and the second succeeds (one retry, result success)
-     * - both first time and retry fail (one retry, result failure)
-     */
     suite("Repeat on success according to a provided strategy")(
       testM("for 'recurs(a negative number)' repeats 0 additional time") {
         // A repeat with a negative number of times should not repeat the action at all
@@ -587,8 +587,21 @@ object ScheduleSpec extends ZIOBaseSpec {
       val schedule: Schedule[Clock with Random, Any, Unit] = Schedule.once
       val schedule2: Schedule[Random, Any, Unit]           = schedule.provideSomeLayer[Random](clockLayer)
       assert(schedule2)(anything)
-    }
+    },
+    suite("return values")(
+      suite("delays")(
+        testM("fromDurations")(checkDelays(Schedule.fromDurations(1.second, 2.seconds, 3.seconds, 4.seconds)))
+      )
+    )
   )
+
+  def checkDelays[Env](schedule: Schedule[Env, Any, Duration]): URIO[Env, TestResult] =
+    for {
+      now      <- ZIO.succeed(OffsetDateTime.now)
+      in        = Chunk(1, 2, 3, 4, 5)
+      actual   <- schedule.run(now, in)
+      expected <- schedule.delays.run(now, in)
+    } yield assert(actual)(equalTo(expected))
 
   val ioSucceed: (String, Unit) => UIO[String]      = (_: String, _: Unit) => IO.succeed("OrElse")
   val ioFail: (String, Unit) => IO[String, Nothing] = (_: String, _: Unit) => IO.fail("OrElseFailed")
